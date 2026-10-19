@@ -23,11 +23,12 @@ setu/
 ├── packages/
 │   └── shared/       Cross-cutting TypeScript types and utilities
 ├── supabase/
-│   └── migrations/   Database migrations (wired in a later task)
-├── tests/            Root-level integration tests (added in later tasks)
+│   └── migrations/   Versioned SQL migrations (apply manually or via psql)
+├── tests/            Root-level tests (migration validators, future integration tests)
 ├── .env.example      Environment variable reference – copy to .env
 ├── .gitignore
 ├── package.json      Monorepo root (npm workspaces)
+├── vitest.config.ts  Root-level Vitest config (tests/ directory)
 └── README.md
 ```
 
@@ -81,6 +82,7 @@ cp .env.example .env
 | `SUPABASE_URL` | API | Added in a later task |
 | `SUPABASE_ANON_KEY` | API | Added in a later task |
 | `SUPABASE_SERVICE_ROLE_KEY` | API (backend only) | **Never** expose to the frontend |
+| `DATABASE_URL` | API (backend only) | Postgres connection string — backend only, never expose |
 | `VITE_SUPABASE_URL` | Web | Added in a later task |
 | `VITE_SUPABASE_ANON_KEY` | Web | Added in a later task |
 
@@ -102,8 +104,14 @@ npm run build:web
 ## Testing
 
 ```bash
-# Run all tests in every workspace
+# Run all tests (root migration tests + all workspace tests)
 npm run test
+
+# Run only the root-level migration static validator
+npm run test:root
+
+# Run only workspace tests
+npm run test:workspaces
 
 # Run just the frontend tests
 npm run test --workspace=apps/web
@@ -143,6 +151,54 @@ Returns the API process health. Does **not** require a database connection.
 | `Cannot find module '@setu/shared'` | Run `npm install` from the repository root to link workspace packages. |
 | Tailwind classes not applying | Ensure `postcss.config.js` and `tailwind.config.js` are present in `apps/web`. |
 | `tsx` not found | Run `npm install` – `tsx` is a dev dependency of `apps/api`. |
+| Migration fails with "extension already exists" | Add `IF NOT EXISTS` — already included in all migrations. |
+| Migration fails with "relation already exists" | Each `CREATE TABLE` uses `IF NOT EXISTS`; safe to re-run on the same DB. |
+
+---
+
+## Database migrations
+
+Migrations live in `supabase/migrations/` and are numbered sequentially:
+
+```
+supabase/migrations/
+└── 0001_core_identity_and_tenancy.sql   ← users, user_sessions, shops, shop_members, shop_settings
+```
+
+### Applying migrations manually
+
+No Supabase CLI or migration runner is required for Task 2. Apply via:
+
+**Option A — Supabase Dashboard SQL editor**
+1. Open your Supabase project → SQL Editor.
+2. Paste the contents of the migration file.
+3. Click **Run**.
+
+**Option B — psql**
+```bash
+psql "$DATABASE_URL" -f supabase/migrations/0001_core_identity_and_tenancy.sql
+```
+
+**Option C — Supabase CLI** (if installed later)
+```bash
+supabase db push
+```
+
+### Migration philosophy
+- Files are named `NNNN_description.sql` (four-digit prefix, underscored description).
+- Every statement uses `IF NOT EXISTS` / `CREATE OR REPLACE` so migrations are safe to re-run.
+- Never drop tables or columns in a migration without first consulting the team.
+- Always apply migrations in order on a fresh database.
+- Never run migrations against production without a backup and a review.
+
+### Row-Level Security and backend access
+
+All five tables have **RLS enabled**. No RLS policies are defined. This means:
+
+- The **Supabase Data API (PostgREST)** cannot return any rows to anonymous or Supabase JWT callers — the tables are effectively invisible to the public internet.
+- The **Express backend** connects using the **service-role key** (via `DATABASE_URL` or the Supabase client initialized with `SUPABASE_SERVICE_ROLE_KEY`). The service role bypasses RLS intentionally and is the only path for legitimate data access.
+- `DATABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are **server-only** variables. They must never appear in `VITE_*` environment variables or be sent to the browser.
+- Do not add RLS policies that reference `auth.uid()` — Supabase Auth is not used in Setu.
 
 ---
 
@@ -160,13 +216,22 @@ Returns the API process health. Does **not** require a database connection.
 
 ---
 
-## Scope – Task 1 only
+## Scope
 
-This initial setup includes **only** the project foundation. The following features are intentionally out of scope and will be built in subsequent tasks:
+### Task 1 — Project foundation ✅
+- React/Vite/TypeScript frontend with Tailwind CSS
+- Express/TypeScript backend with health endpoint
+- npm workspaces, shared types, automated tests
 
+### Task 2 — Database schema ✅
+- PostgreSQL migration: `users`, `user_sessions`, `shops`, `shop_members`, `shop_settings`
+- RLS enabled on all tables; no public access
+- Static SQL validator tests (30+ assertions)
+
+### Upcoming tasks (not yet implemented)
 - User registration / login / authentication
-- Supabase connection and database schema
-- Merchant and shop management
+- Supabase connection pool and database client
+- Shop onboarding UI and API
 - Product, inventory, purchase and sales features
 - Expense tracking and reports
 - QR catalogues and image uploads
